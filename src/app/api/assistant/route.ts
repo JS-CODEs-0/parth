@@ -8,6 +8,9 @@ import { Product, ActivePreferences, RecommendationDetail, ComparisonData } from
 const MANDATORY_MODEL = 'nvidia/nemotron-3-ultra-550b-a55b';
 const DEFAULT_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 
+// Allow up to 60 seconds for NVIDIA Nemotron 3 Ultra (550B) reasoning on Vercel
+export const maxDuration = 60;
+
 interface RequestMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -15,17 +18,26 @@ interface RequestMessage {
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.NVIDIA_API_KEY;
-    const model = process.env.NVIDIA_MODEL || MANDATORY_MODEL;
-    const baseURL = process.env.NVIDIA_BASE_URL || DEFAULT_BASE_URL;
+    // Read environment variables with robust sanitization (handles quotes & whitespace)
+    const rawApiKey = process.env.NVIDIA_API_KEY;
+    const apiKey = rawApiKey ? rawApiKey.trim().replace(/^["']|["']$/g, '').trim() : '';
+
+    const model = (process.env.NVIDIA_MODEL?.trim() || MANDATORY_MODEL);
+
+    // Normalize baseURL: strip any trailing /chat/completions or slashes so OpenAI SDK appends cleanly
+    const rawBaseURL = process.env.NVIDIA_BASE_URL?.trim() || DEFAULT_BASE_URL;
+    const baseURL = rawBaseURL.replace(/\/chat\/completions\/?$/, '').replace(/\/+$/, '');
 
     // Check API Key
-    if (!apiKey || apiKey.trim() === '') {
+    if (!apiKey) {
       return NextResponse.json(
         {
-          error: 'NVIDIA API Key not configured. Please add NVIDIA_API_KEY to your .env.local file.',
+          error:
+            'NVIDIA API Key not configured. If deployed on Vercel, add NVIDIA_API_KEY in Vercel Project Settings → Environment Variables. For local development, add it to your .env.local file.',
           code: 'MISSING_API_KEY',
           modelUsed: model,
+          vercelHelp:
+            'In your Vercel Dashboard, navigate to Project Settings → Environment Variables, create NVIDIA_API_KEY with your NVIDIA API key (nvapi-...), and redeploy.',
         },
         { status: 503 }
       );
@@ -160,6 +172,8 @@ export async function POST(req: Request) {
     const client = new OpenAI({
       baseURL,
       apiKey,
+      timeout: 50000, // 50s timeout to stay safely within Vercel's 60s maxDuration limit
+      maxRetries: 1,  // Avoid long retry chains on Serverless Functions
     });
 
     // 3. System prompt enforcing all 7 intelligent shopping agent capabilities
@@ -318,14 +332,59 @@ ${JSON.stringify(catalogDirectory)}`;
   } catch (error: any) {
     console.error('NVIDIA Nemotron 3 Ultra Shopping Agent Error:', error);
 
-    const status = error.status || 500;
-    const message = error.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.';
+    let status = typeof error?.status === 'number' ? error.status : 500;
+    let code = error?.code || 'NVIDIA_API_ERROR';
+    let userFriendlyMessage = error?.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.';
+
+    // Classify known NVIDIA API errors for accurate user feedback
+    if (
+      status === 401 ||
+      error?.message?.includes('401') ||
+      error?.message?.toLowerCase().includes('unauthorized') ||
+      error?.message?.toLowerCase().includes('invalid api key')
+    ) {
+      status = 401;
+      code = 'INVALID_API_KEY';
+      userFriendlyMessage =
+        'The configured NVIDIA API Key was rejected by NVIDIA. Please verify that your NVIDIA_API_KEY is active and correct in Vercel Project Settings → Environment Variables (or .env.local locally).';
+    } else if (
+      status === 403 ||
+      error?.message?.includes('403') ||
+      error?.message?.toLowerCase().includes('forbidden')
+    ) {
+      status = 403;
+      code = 'FORBIDDEN';
+      userFriendlyMessage =
+        'Access to NVIDIA Nemotron 3 Ultra was forbidden. Please verify your NVIDIA Developer account permissions and model entitlements at integrate.api.nvidia.com.';
+    } else if (
+      status === 429 ||
+      error?.message?.includes('429') ||
+      error?.message?.toLowerCase().includes('rate limit')
+    ) {
+      status = 429;
+      code = 'RATE_LIMIT_EXCEEDED';
+      userFriendlyMessage =
+        'NVIDIA Nemotron 3 Ultra rate limit reached. Please wait a few moments before sending another message.';
+    } else if (
+      error?.name === 'APIConnectionTimeoutError' ||
+      error?.message?.toLowerCase().includes('timeout')
+    ) {
+      status = 504;
+      code = 'REQUEST_TIMEOUT';
+      userFriendlyMessage =
+        'The request to NVIDIA Nemotron 3 Ultra timed out. The 550B reasoning model is experiencing high load; please retry your request.';
+    } else if (status >= 500) {
+      status = 502;
+      code = 'NVIDIA_UPSTREAM_ERROR';
+      userFriendlyMessage =
+        'The NVIDIA Nemotron API returned an upstream service error. Please try again in a few moments.';
+    }
 
     return NextResponse.json(
       {
-        error: message,
-        code: error.code || 'NVIDIA_API_ERROR',
-        details: error.error || null,
+        error: userFriendlyMessage,
+        code,
+        details: error?.message || null,
         modelUsed: MANDATORY_MODEL,
       },
       { status }

@@ -134,7 +134,7 @@ function AssistantContent() {
       const errorMsg: ChatMessage = {
         id: Math.random().toString(36).substring(2, 9),
         sender: 'assistant',
-        text: `⚠️ **Shopping Agent Notice**: ${err.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.'}\n\nPlease check your \`NVIDIA_API_KEY\` configuration in \`.env.local\` or try again.`,
+        text: `⚠️ **Shopping Agent Notice**: ${err.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.'}\n\n*Note for deployment:* In Vercel, ensure \`NVIDIA_API_KEY\` is added under **Project Settings → Environment Variables** (and redeploy). For local development, check \`.env.local\`.`,
         timestamp: 'Just now',
       };
       setMessages((prev) => [...prev, errorMsg]);

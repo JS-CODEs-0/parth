@@ -171,7 +171,7 @@ export function AiStatusIndicator({ compact = false }: AiStatusIndicatorProps) {
             )}
             {data.status === 'unconfigured' && (
               <p className="text-amber-300">
-                ⚠️ API key is missing. Add <code className="text-white bg-black/40 px-1 rounded">NVIDIA_API_KEY</code> to <code className="text-white bg-black/40 px-1 rounded">.env.local</code>.
+                ⚠️ API key is missing. Add <code className="text-white bg-black/40 px-1 rounded">NVIDIA_API_KEY</code> in Vercel Project Settings → Environment Variables (or <code className="text-white bg-black/40 px-1 rounded">.env.local</code> locally).
               </p>
             )}
             {data.status === 'unavailable' && (
