@@ -104,10 +104,29 @@ function AssistantContent() {
         }),
       });
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        // Safe handling if Vercel or gateway returns non-JSON text/HTML
+        if (!response.ok) {
+          if (
+            response.status === 504 ||
+            rawText.includes('FUNCTION_INVOCATION_TIMEOUT') ||
+            rawText.includes('timed out')
+          ) {
+            throw new Error(
+              'The request timed out while NVIDIA Nemotron 3 Ultra was reasoning. Please retry with a more specific query.'
+            );
+          }
+          throw new Error(`Server returned HTTP ${response.status}. Please retry shortly.`);
+        }
+        throw new Error('Received unexpected non-JSON response from server.');
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || `Error ${response.status}: Failed to get AI response`);
+        throw new Error(data?.error || `Error ${response.status}: Failed to get AI response`);
       }
 
       if (data.activePreferences) {
@@ -131,10 +150,17 @@ function AssistantContent() {
     } catch (err: any) {
       console.error('Shopping Agent Error:', err);
 
+      const isMissingKey =
+        err.message?.includes('NVIDIA_API_KEY') ||
+        err.message?.includes('API Key not configured');
+      const deploymentNote = isMissingKey
+        ? '\n\n*Note for deployment:* In Vercel, ensure `NVIDIA_API_KEY` is added under **Project Settings → Environment Variables** (and redeploy). For local development, check `.env.local`.'
+        : '';
+
       const errorMsg: ChatMessage = {
         id: Math.random().toString(36).substring(2, 9),
         sender: 'assistant',
-        text: `⚠️ **Shopping Agent Notice**: ${err.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.'}\n\n*Note for deployment:* In Vercel, ensure \`NVIDIA_API_KEY\` is added under **Project Settings → Environment Variables** (and redeploy). For local development, check \`.env.local\`.`,
+        text: `⚠️ **Shopping Agent Notice**: ${err.message || 'An error occurred while communicating with NVIDIA Nemotron 3 Ultra.'}${deploymentNote}`,
         timestamp: 'Just now',
       };
       setMessages((prev) => [...prev, errorMsg]);
